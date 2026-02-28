@@ -258,7 +258,7 @@ export function VisitorSidebar({
                       
                       {/* Time ago indicator */}
                       <div className="flex items-center gap-1 text-xs landscape:text-[10px] text-gray-500 font-medium whitespace-nowrap sm:self-auto">
-                        <span>{getTimeAgo(visitor.updatedAt || visitor.lastSeen)}</span>
+                        <span>{getTimeAgo(visitor.lastActiveAt || visitor.updatedAt || visitor.lastSeen)}</span>
                       </div>
                     </div>
 

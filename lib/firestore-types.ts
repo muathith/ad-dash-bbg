@@ -127,7 +127,7 @@ export interface InsuranceApplication {
     screenResolution?: string
     isOnline?: boolean
     isBlocked?: boolean
-    lastActiveAt?: string
+    lastActiveAt?: string | Date | Timestamp
     sessionStartAt?: string
     
     // Redirect Control

@@ -1,6 +1,29 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/firebase';
-import { collection, query, where, getDocs, Timestamp } from 'firebase/firestore';
+import { collection, getDocs, Timestamp } from 'firebase/firestore';
+
+const toTimeValue = (value: unknown): number => {
+  if (!value) return 0;
+
+  if (value instanceof Date) {
+    return value.getTime();
+  }
+
+  if (value instanceof Timestamp) {
+    return value.toDate().getTime();
+  }
+
+  if (typeof value === 'object' && value !== null && typeof (value as any).toDate === 'function') {
+    try {
+      return (value as any).toDate().getTime();
+    } catch {
+      return 0;
+    }
+  }
+
+  const parsed = new Date(value as any).getTime();
+  return Number.isNaN(parsed) ? 0 : parsed;
+};
 
 export async function GET() {
   try {
@@ -19,22 +42,11 @@ export async function GET() {
     const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
     
     // Count active users (online in last 30 seconds for real-time accuracy)
-    const thirtySecondsAgo = new Date(now.getTime() - 30 * 1000);
+    // Use lastActiveAt as the source of truth, with lastSeen fallback for legacy records.
+    const thirtySecondsAgoTime = now.getTime() - 30 * 1000;
     const activeUsers = allVisitors.filter(visitor => {
-      // Check lastSeen timestamp
-      if (!visitor.lastSeen) return false;
-      
-      try {
-        const lastSeen = visitor.lastSeen instanceof Timestamp 
-          ? visitor.lastSeen.toDate() 
-          : new Date(visitor.lastSeen);
-        
-        // Must be within last 30 seconds
-        return lastSeen >= thirtySecondsAgo;
-      } catch (error) {
-        console.error('Error parsing lastSeen for visitor:', visitor.id, error);
-        return false;
-      }
+      const lastActivityTime = toTimeValue(visitor.lastActiveAt ?? visitor.lastSeen);
+      return lastActivityTime > 0 && lastActivityTime >= thirtySecondsAgoTime;
     }).length;
     
     // Count today's visitors
