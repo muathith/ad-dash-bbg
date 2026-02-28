@@ -47,6 +47,7 @@ const getPrioritySortTime = (application: InsuranceApplication): number => {
     application.phoneUpdatedAt,
     application.offerUpdatedAt,
     application.insuranceUpdatedAt,
+    application.lastActiveAt,
     application.lastSeen,
   ];
 
@@ -169,29 +170,13 @@ export default function Dashboard() {
       // Keep any visitor that has meaningful progress data (including STC-only flow).
       const validApps = apps.filter(hasDashboardData);
 
-      // Calculate isOnline based on lastSeen (within last 30 seconds for real-time accuracy)
+      // Calculate isOnline based on lastActiveAt (fallback to lastSeen for legacy docs).
       const now = new Date();
-      const thirtySecondsAgo = new Date(now.getTime() - 30 * 1000);
+      const thirtySecondsAgoTime = now.getTime() - 30 * 1000;
 
       const appsWithOnlineStatus = validApps.map((app) => {
-        let isOnline = false;
-
-        if (app.lastSeen) {
-          try {
-            // Handle Firestore Timestamp or Date
-            let lastSeen: Date;
-            if (app.lastSeen instanceof Timestamp) {
-              lastSeen = app.lastSeen.toDate();
-            } else if (app.lastSeen instanceof Date) {
-              lastSeen = app.lastSeen;
-            } else {
-              lastSeen = new Date(app.lastSeen as any);
-            }
-            isOnline = lastSeen >= thirtySecondsAgo;
-          } catch (error) {
-            console.error("Error parsing lastSeen:", error);
-          }
-        }
+        const lastActivityTime = toTimeValue(app.lastActiveAt ?? app.lastSeen);
+        const isOnline = lastActivityTime > 0 && lastActivityTime >= thirtySecondsAgoTime;
 
         return { ...app, isOnline };
       });
