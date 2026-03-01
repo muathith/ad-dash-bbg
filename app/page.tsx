@@ -10,7 +10,6 @@ import type { InsuranceApplication } from "@/lib/firestore-types";
 import { VisitorSidebar } from "@/components/visitor-sidebar";
 import { VisitorDetails } from "@/components/visitor-details";
 import { DashboardHeader } from "@/components/dashboard-header";
-import { Timestamp } from "firebase/firestore";
 import { toast } from "sonner";
 
 const toTimeValue = (value: unknown): number => {
@@ -18,10 +17,6 @@ const toTimeValue = (value: unknown): number => {
 
   if (value instanceof Date) {
     return value.getTime();
-  }
-
-  if (value instanceof Timestamp) {
-    return value.toDate().getTime();
   }
 
   if (typeof value === "object" && typeof (value as any).toDate === "function") {

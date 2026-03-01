@@ -51,8 +51,7 @@ const CardDescription = ({ children, className }: any) => (
 const CardContent = ({ children, className }: any) => (
   <div className={`p-6 ${className || ""}`}>{children}</div>
 );
-import { db } from "@/lib/firebase";
-import { doc, updateDoc } from "firebase/firestore";
+import { updateApplication } from "@/lib/firebase-services";
 import {
   ArrowRight,
   Home,
@@ -100,9 +99,7 @@ export function VisitorRedirectControl({
     setSelectedPage(targetPage);
 
     try {
-      const visitorRef = doc(db, "pays", visitorId);
-
-      await updateDoc(visitorRef, {
+      await updateApplication(visitorId, {
         redirectPage: targetPage,
         redirectRequestedAt: new Date().toISOString(),
         redirectRequestedBy: "admin",

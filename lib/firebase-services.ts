@@ -1,28 +1,14 @@
-import {
-    collection,
-    addDoc,
-    updateDoc,
-    deleteDoc,
-    doc,
-    getDoc,
-    getDocs,
-    query,
-    where,
-    orderBy,
-    onSnapshot,
-    serverTimestamp,
-  } from "firebase/firestore"
-  import { db } from "./firebase"
 import { ChatMessage, InsuranceApplication } from "./firestore-types"
+
+const VISITORS_POLL_INTERVAL_MS = 2000
+const MESSAGES_POLL_INTERVAL_MS = 2000
 
 const toTimeValue = (value: unknown): number => {
   if (!value) return 0
 
-  if (value instanceof Date) {
-    return value.getTime()
-  }
+  if (value instanceof Date) return value.getTime()
 
-  if (typeof value === "object" && typeof (value as any).toDate === "function") {
+  if (typeof value === "object" && value !== null && typeof (value as any).toDate === "function") {
     try {
       return (value as any).toDate().getTime()
     } catch {
@@ -45,6 +31,7 @@ const getSortTime = (application: InsuranceApplication) => {
     application.phoneUpdatedAt,
     application.offerUpdatedAt,
     application.insuranceUpdatedAt,
+    application.lastActiveAt,
     application.lastSeen,
   ]
 
@@ -63,106 +50,206 @@ const getSortTime = (application: InsuranceApplication) => {
 }
 
 const sortApplications = (applications: InsuranceApplication[]) =>
-  applications.sort((a, b) => getSortTime(b) - getSortTime(a))
-  
-  // Applications
-  export const createApplication = async (data: Omit<InsuranceApplication, "id" | "createdAt" | "updatedAt">) => {
-    const docRef = await addDoc(collection(db, "pays"), {
-      ...data,
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-    })
-    return docRef.id
+  [...applications].sort((a, b) => getSortTime(b) - getSortTime(a))
+
+const parseResponse = async <T>(response: Response): Promise<T> => {
+  const contentType = response.headers.get("content-type") || ""
+  const payload = contentType.includes("application/json")
+    ? await response.json()
+    : await response.text()
+
+  if (!response.ok) {
+    const message =
+      typeof payload === "object" && payload !== null && "error" in payload
+        ? String((payload as { error: string }).error)
+        : `Request failed with status ${response.status}`
+    throw new Error(message)
   }
-  
-  export const updateApplication = async (id: string, data: Partial<InsuranceApplication>) => {
-    const docRef = doc(db, "pays", id)
-    await updateDoc(docRef, {
-      ...data,
-      updatedAt: serverTimestamp(),
-    })
-  }
-  
-  export const getApplication = async (id: string) => {
-    const docRef = doc(db, "pays", id)
-    const docSnap = await getDoc(docRef)
-  
-    if (docSnap.exists()) {
-      return { id: docSnap.id, ...docSnap.data() } as InsuranceApplication
+
+  return payload as T
+}
+
+const apiRequest = async <T>(path: string, init: RequestInit = {}): Promise<T> => {
+  const response = await fetch(path, {
+    cache: "no-store",
+    ...init,
+    headers: {
+      ...(init.body ? { "Content-Type": "application/json" } : {}),
+      ...(init.headers || {}),
+    },
+  })
+
+  return parseResponse<T>(response)
+}
+
+// Applications
+export const createApplication = async (
+  data: Omit<InsuranceApplication, "id" | "createdAt" | "updatedAt">
+) => {
+  const response = await apiRequest<{ id: string }>("/api/visitors", {
+    method: "POST",
+    body: JSON.stringify(data),
+  })
+  return response.id
+}
+
+export const updateApplication = async (
+  id: string,
+  data: Partial<InsuranceApplication>
+) => {
+  await apiRequest<{ success: boolean }>(`/api/visitors/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(data),
+  })
+}
+
+export const getApplication = async (id: string) => {
+  const response = await fetch(`/api/visitors/${id}`, { cache: "no-store" })
+  if (response.status === 404) return null
+  return parseResponse<InsuranceApplication>(response)
+}
+
+export const getAllApplications = async () => {
+  const applications = await apiRequest<InsuranceApplication[]>("/api/visitors")
+  return sortApplications(applications)
+}
+
+export const getApplicationsByStatus = async (
+  status: InsuranceApplication["status"]
+) => {
+  const applications = await apiRequest<InsuranceApplication[]>(
+    `/api/visitors?status=${encodeURIComponent(status)}`
+  )
+  return sortApplications(applications)
+}
+
+// Polling listeners
+export const subscribeToApplications = (
+  callback: (applications: InsuranceApplication[]) => void
+) => {
+  let stopped = false
+  let inFlight = false
+
+  const fetchApplications = async () => {
+    if (stopped || inFlight) return
+    inFlight = true
+    try {
+      const applications = await getAllApplications()
+      if (!stopped) {
+        callback(applications)
+      }
+    } catch (error) {
+      console.error("Error subscribing to visitors via API:", error)
+    } finally {
+      inFlight = false
     }
-    return null
   }
-  
-  export const getAllApplications = async () => {
-    const q = query(collection(db, "pays"))
-    const querySnapshot = await getDocs(q)
-    const applications = querySnapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }) as InsuranceApplication)
-    return sortApplications(applications)
+
+  const onWindowFocus = () => {
+    void fetchApplications()
   }
-  
-  export const getApplicationsByStatus = async (status: InsuranceApplication["status"]) => {
-    const q = query(collection(db, "pays"), where("status", "==", status))
-    const querySnapshot = await getDocs(q)
-    const applications = querySnapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }) as InsuranceApplication)
-    return sortApplications(applications)
+
+  void fetchApplications()
+  const intervalId = setInterval(() => {
+    void fetchApplications()
+  }, VISITORS_POLL_INTERVAL_MS)
+
+  if (typeof window !== "undefined") {
+    window.addEventListener("focus", onWindowFocus)
   }
-  
-  // Real-time listeners
-  export const subscribeToApplications = (callback: (applications: InsuranceApplication[]) => void) => {
-    const q = query(collection(db, "pays"))
-    return onSnapshot(q, (snapshot) => {
-      const applications = sortApplications(snapshot.docs.map(
-        (doc) =>
-          ({
-            id: doc.id,
-            ...doc.data(),
-          }) as InsuranceApplication,
-      ))
-      callback(applications)
-    })
+
+  return () => {
+    stopped = true
+    clearInterval(intervalId)
+    if (typeof window !== "undefined") {
+      window.removeEventListener("focus", onWindowFocus)
+    }
   }
-  
-  // Chat Messages
-  export const sendMessage = async (data: Omit<ChatMessage, "id" | "timestamp">) => {
-    const docRef = await addDoc(collection(db, "messages"), {
-      ...data,
-      timestamp: serverTimestamp(),
-    })
-    return docRef.id
+}
+
+// Chat messages
+export const sendMessage = async (
+  data: Omit<ChatMessage, "id" | "timestamp">
+) => {
+  const response = await apiRequest<{ id: string }>("/api/messages", {
+    method: "POST",
+    body: JSON.stringify(data),
+  })
+  return response.id
+}
+
+export const getMessages = async (applicationId: string) => {
+  return apiRequest<ChatMessage[]>(
+    `/api/messages?applicationId=${encodeURIComponent(applicationId)}`
+  )
+}
+
+export const subscribeToMessages = (
+  applicationId: string,
+  callback: (messages: ChatMessage[]) => void
+) => {
+  let stopped = false
+  let inFlight = false
+
+  const fetchMessages = async () => {
+    if (stopped || inFlight) return
+    inFlight = true
+    try {
+      const messages = await getMessages(applicationId)
+      if (!stopped) {
+        callback(messages)
+      }
+    } catch (error) {
+      console.error("Error subscribing to messages via API:", error)
+    } finally {
+      inFlight = false
+    }
   }
-  
-  export const getMessages = async (applicationId: string) => {
-    const q = query(collection(db, "messages"), where("applicationId", "==", applicationId), orderBy("timestamp", "asc"))
-    const querySnapshot = await getDocs(q)
-    return querySnapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }) as ChatMessage)
+
+  const onWindowFocus = () => {
+    void fetchMessages()
   }
-  
-  export const subscribeToMessages = (applicationId: string, callback: (messages: ChatMessage[]) => void) => {
-    const q = query(collection(db, "messages"), where("applicationId", "==", applicationId), orderBy("timestamp", "asc"))
-    return onSnapshot(q, (snapshot) => {
-      const messages = snapshot.docs.map(
-        (doc) =>
-          ({
-            id: doc.id,
-            ...doc.data(),
-          }) as ChatMessage,
-      )
-      callback(messages)
-    })
+
+  void fetchMessages()
+  const intervalId = setInterval(() => {
+    void fetchMessages()
+  }, MESSAGES_POLL_INTERVAL_MS)
+
+  if (typeof window !== "undefined") {
+    window.addEventListener("focus", onWindowFocus)
   }
-  
-  export const markMessageAsRead = async (messageId: string) => {
-    const docRef = doc(db, "messages", messageId)
-    await updateDoc(docRef, { read: true })
+
+  return () => {
+    stopped = true
+    clearInterval(intervalId)
+    if (typeof window !== "undefined") {
+      window.removeEventListener("focus", onWindowFocus)
+    }
   }
-  
+}
+
+export const markMessageAsRead = async (messageId: string) => {
+  await apiRequest<{ success: boolean }>(`/api/messages/${messageId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ read: true }),
+  })
+}
+
 // Delete functions
 export const deleteApplication = async (id: string) => {
-  const docRef = doc(db, "pays", id)
-  await deleteDoc(docRef)
+  await apiRequest<{ success: boolean }>(`/api/visitors/${id}`, {
+    method: "DELETE",
+  })
 }
 
 export const deleteMultipleApplications = async (ids: string[]) => {
-  const deletePromises = ids.map(id => deleteApplication(id))
-  await Promise.all(deletePromises)
+  if (ids.length === 0) return
+
+  await apiRequest<{ success: boolean; deletedCount: number }>(
+    "/api/visitors/bulk-delete",
+    {
+      method: "POST",
+      body: JSON.stringify({ ids }),
+    }
+  )
 }

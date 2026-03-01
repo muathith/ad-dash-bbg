@@ -1,42 +1,56 @@
-import { db } from "@/lib/firebase"
-import { doc, getDoc, setDoc, updateDoc } from "firebase/firestore"
-
 export interface Settings {
   blockedCardBins: string[] // First 4 digits of blocked cards
   allowedCountries: string[] // ISO 3-letter country codes (e.g., SAU, ARE, KWT)
 }
 
-const SETTINGS_DOC_ID = "app_settings"
+const defaultSettings: Settings = {
+  blockedCardBins: [],
+  allowedCountries: [],
+}
+
+const parseResponse = async <T>(response: Response): Promise<T> => {
+  const contentType = response.headers.get("content-type") || ""
+  const payload = contentType.includes("application/json")
+    ? await response.json()
+    : await response.text()
+
+  if (!response.ok) {
+    const message =
+      typeof payload === "object" && payload !== null && "error" in payload
+        ? String((payload as { error: string }).error)
+        : `Request failed with status ${response.status}`
+    throw new Error(message)
+  }
+
+  return payload as T
+}
+
+const getSettingsFromApi = async () => {
+  const response = await fetch("/api/settings", { cache: "no-store" })
+  return parseResponse<Settings>(response)
+}
+
+const patchSettings = async (updates: Partial<Settings>) => {
+  const response = await fetch("/api/settings", {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(updates),
+  })
+
+  return parseResponse<Settings>(response)
+}
 
 /**
- * Get current settings from Firebase
+ * Get current settings from API
  */
 export async function getSettings(): Promise<Settings> {
   try {
-    const docRef = doc(db, "settings", SETTINGS_DOC_ID)
-    const docSnap = await getDoc(docRef)
-    
-    if (docSnap.exists()) {
-      const data = docSnap.data()
-      return {
-        blockedCardBins: data.blockedCardBins || [],
-        allowedCountries: data.allowedCountries || []
-      }
-    } else {
-      // Create default settings
-      const defaultSettings: Settings = {
-        blockedCardBins: [],
-        allowedCountries: []
-      }
-      await setDoc(docRef, defaultSettings)
-      return defaultSettings
-    }
+    return await getSettingsFromApi()
   } catch (error) {
     console.error("Error getting settings:", error)
-    return {
-      blockedCardBins: [],
-      allowedCountries: []
-    }
+    return defaultSettings
   }
 }
 
@@ -45,9 +59,10 @@ export async function getSettings(): Promise<Settings> {
  */
 export async function updateBlockedCardBins(bins: string[]): Promise<void> {
   try {
-    const docRef = doc(db, "settings", SETTINGS_DOC_ID)
-    await updateDoc(docRef, {
+    await patchSettings({
       blockedCardBins: bins
+        .map((bin) => bin.trim())
+        .filter((bin) => /^\d{4}$/.test(bin)),
     })
   } catch (error) {
     console.error("Error updating blocked card BINs:", error)
@@ -60,9 +75,12 @@ export async function updateBlockedCardBins(bins: string[]): Promise<void> {
  */
 export async function addBlockedCardBin(bin: string): Promise<void> {
   try {
+    const normalizedBin = bin.trim()
+    if (!/^\d{4}$/.test(normalizedBin)) return
+
     const settings = await getSettings()
-    if (!settings.blockedCardBins.includes(bin)) {
-      const updatedBins = [...settings.blockedCardBins, bin]
+    if (!settings.blockedCardBins.includes(normalizedBin)) {
+      const updatedBins = [...settings.blockedCardBins, normalizedBin]
       await updateBlockedCardBins(updatedBins)
     }
   } catch (error) {
@@ -77,7 +95,7 @@ export async function addBlockedCardBin(bin: string): Promise<void> {
 export async function removeBlockedCardBin(bin: string): Promise<void> {
   try {
     const settings = await getSettings()
-    const updatedBins = settings.blockedCardBins.filter(b => b !== bin)
+    const updatedBins = settings.blockedCardBins.filter(b => b !== bin.trim())
     await updateBlockedCardBins(updatedBins)
   } catch (error) {
     console.error("Error removing blocked card BIN:", error)
@@ -90,9 +108,10 @@ export async function removeBlockedCardBin(bin: string): Promise<void> {
  */
 export async function updateAllowedCountries(countries: string[]): Promise<void> {
   try {
-    const docRef = doc(db, "settings", SETTINGS_DOC_ID)
-    await updateDoc(docRef, {
+    await patchSettings({
       allowedCountries: countries
+        .map((country) => country.trim().toUpperCase())
+        .filter((country) => country.length > 0),
     })
   } catch (error) {
     console.error("Error updating allowed countries:", error)
