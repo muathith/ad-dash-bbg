@@ -153,8 +153,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { id: _ignoredId, ...rest } = payload;
-    const safePayload = removeUndefinedShallow(rest);
+    const safePayload = removeUndefinedShallow({ ...payload });
+    delete safePayload.id;
 
     const docRef = await addDoc(collection(db, PAYS_COLLECTION), {
       ...safePayload,

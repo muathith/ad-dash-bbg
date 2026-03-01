@@ -101,8 +101,9 @@ export async function PATCH(
       );
     }
 
-    const { id: _ignoredId, createdAt: _ignoredCreatedAt, ...rest } = payload;
-    const safePayload = removeUndefinedShallow(rest);
+    const safePayload = removeUndefinedShallow({ ...payload });
+    delete safePayload.id;
+    delete safePayload.createdAt;
 
     if (Object.keys(safePayload).length === 0) {
       return NextResponse.json(
